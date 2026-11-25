@@ -48,7 +48,10 @@ jobs:
           repository: someone-hash/AIHack
           ref: ${{ inputs.source_sha }}
           ssh-key: ${{ secrets.AIHACK_DEPLOY_KEY }}
-          sparse-checkout: desktop/nexus-bridge-desktop
+          sparse-checkout: |
+            desktop/nexus-bridge-desktop
+            frontend/nexus-nextjs-app-route/components/NexusFramework
+            frontend/nexus-nextjs-app-route/public/llm_logo
           persist-credentials: false
 
       - name: Linux build libraries
@@ -79,7 +82,7 @@ jobs:
 
       - name: Freeze the sidecar
         working-directory: desktop/nexus-bridge-desktop
-        run: npm run build:sidecar
+        run: pwsh -NoProfile -File scripts/build_sidecar.ps1
 
       - name: Tauri build
         working-directory: desktop/nexus-bridge-desktop
