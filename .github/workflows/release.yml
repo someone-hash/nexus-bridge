@@ -1,0 +1,125 @@
+# Builds Nexus Bridge from a commit of the private source repo and publishes the installers as a release here.
+# Run it by hand: Actions > Release > Run workflow, with the 40-character AIHack commit to build.
+# The asset names below are the contract the download page (www.nexusify.ai/bridge/desktop) reads; change both together.
+# Builds are unsigned (no Apple or Windows certificate yet); macOS builds are ad-hoc signed so Apple silicon runs them.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: AIHack commit to build (40-character sha)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.asset }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, asset: mac-arm64.dmg, bundle: dmg, out: dmg/*.dmg }
+          - { os: macos-15-intel, asset: mac-x64.dmg, bundle: dmg, out: dmg/*.dmg }
+          - { os: windows-latest, asset: windows-x64-setup.exe, bundle: nsis, out: nsis/*-setup.exe }
+          - { os: ubuntu-22.04, asset: ubuntu-amd64.deb, bundle: deb, out: deb/*.deb }
+    runs-on: ${{ matrix.os }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check the source commit
+        shell: bash
+        env:
+          SHA: ${{ inputs.source_sha }}
+        run: '[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source_sha must be a 40-character commit sha"; exit 1; }'
+
+      - uses: actions/checkout@v4
+        with:
+          repository: someone-hash/AIHack
+          ref: ${{ inputs.source_sha }}
+          ssh-key: ${{ secrets.AIHACK_DEPLOY_KEY }}
+          sparse-checkout: desktop/nexus-bridge-desktop
+          persist-credentials: false
+
+      - name: Linux build libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libsecret-1-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop/nexus-bridge-desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Version
+        id: version
+        shell: bash
+        working-directory: desktop/nexus-bridge-desktop
+        run: echo "version=$(python -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Install npm dependencies
+        working-directory: desktop/nexus-bridge-desktop
+        run: npm ci
+
+      - name: Freeze the sidecar
+        working-directory: desktop/nexus-bridge-desktop
+        run: npm run build:sidecar
+
+      - name: Tauri build
+        working-directory: desktop/nexus-bridge-desktop
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+        run: npx tauri build --bundles ${{ matrix.bundle }}
+
+      - name: Name the installer
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ASSET: ${{ matrix.asset }}
+          OUT: ${{ matrix.out }}
+        run: |
+          shopt -s nullglob
+          files=(desktop/nexus-bridge-desktop/src-tauri/target/release/bundle/$OUT)
+          [ ${#files[@]} -eq 1 ] || { echo "expected one $OUT, found ${#files[@]}: ${files[*]}"; exit 1; }
+          mkdir -p out && cp "${files[0]}" "out/Nexus-Bridge-$VERSION-$ASSET"
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          ls -l out
+          [ "$(ls out | wc -l)" -eq 4 ] || { echo "expected 4 installers"; exit 1; }
+          gh release create "v$VERSION" out/* --repo "$GITHUB_REPOSITORY" --title "Nexus Bridge $VERSION" --latest \
+            --notes "Nexus Bridge $VERSION for Mac (Apple silicon and Intel), Windows 10 and 11, and Ubuntu 22.04+. Download from https://www.nexusify.ai/bridge/desktop. These builds are not code-signed yet: on a Mac, if it won't open, go to System Settings > Privacy & Security and choose Open Anyway; on Windows, if SmartScreen warns, choose More info, then Run anyway."

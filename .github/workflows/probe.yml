@@ -1,8 +1,0 @@
-name: probe
-on: workflow_dispatch
-jobs:
-  probe:
-    strategy: { matrix: { os: [ubuntu-22.04, windows-latest, macos-latest, macos-15-intel] } }
-    runs-on: ${{ matrix.os }}
-    steps:
-      - run: echo ok
