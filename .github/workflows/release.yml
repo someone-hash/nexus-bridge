@@ -82,6 +82,10 @@ jobs:
 
       - name: Freeze the sidecar
         working-directory: desktop/nexus-bridge-desktop
+        env:
+          # Only the prebuilt cryptography wheel (OpenSSL linked in). On the Intel Mac runner pip otherwise builds it
+          # against Homebrew's OpenSSL and the bundle ships a different libssl: the sidecar dies on import.
+          PIP_ONLY_BINARY: cryptography
         run: pwsh -NoProfile -File scripts/build_sidecar.ps1
 
       # A green build once shipped a sidecar that died on import: run the frozen binary before it is packaged.
