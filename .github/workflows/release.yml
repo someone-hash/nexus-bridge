@@ -84,6 +84,11 @@ jobs:
         working-directory: desktop/nexus-bridge-desktop
         run: pwsh -NoProfile -File scripts/build_sidecar.ps1
 
+      # A green build once shipped a sidecar that died on import: run the frozen binary before it is packaged.
+      - name: Check the sidecar starts
+        working-directory: desktop/nexus-bridge-desktop
+        run: pwsh -NoProfile -File scripts/check_sidecar_starts.ps1
+
       - name: Tauri build
         working-directory: desktop/nexus-bridge-desktop
         env:
